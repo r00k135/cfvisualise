@@ -1,0 +1,688 @@
+{
+	"AWSTemplateFormatVersion":"2010-09-09",
+	"Description":"Umbraco CloudFormation Template - IN DEVELOPMENT!!!",
+	"Mappings":{
+		"IPAddressRanges":{
+			"VPC":{"Cidr":"10.0.0.0/16"},
+			"DbSubnet1":{"Cidr":"10.0.1.0/24"},
+			"DbSubnet2":{"Cidr":"10.0.2.0/24"},
+			"WebSubnet1":{"Cidr":"10.0.11.0/24"},
+			"WebSubnet2":{"Cidr":"10.0.12.0/24"},
+			"WebRdpSource":{"Cidr":"0.0.0.0/0"},
+			"WebHttpSource":{"Cidr":"0.0.0.0/0"},
+			"WebEphemeralEgressDestination":{"Cidr":"0.0.0.0/0"},
+			"WebHttpEgressDestination":{"Cidr":"0.0.0.0/0"}
+		},
+		"Regions":{
+			"us-east-1":{"WebAmi":"ami-173d747e"},
+			"us-west-1":{"WebAmi":"ami-a02015e5"},
+			"us-west-2":{"WebAmi":"ami-60dc4350"},
+			"eu-west-1":{"WebAmi":"ami-a63edbd1"},
+			"ap-southeast-1":{"WebAmi":"ami-268cc774"},
+			"ap-southeast-2":{"WebAmi":"ami-c99904f3"},
+			"ap-northeast-1":{"WebAmi":"ami-cddf43cc"},
+			"sa-east-1":{"WebAmi":"ami-dfd374c2"}
+		},
+		"Database":{
+			"Admin":{"Name":"Administrator"},
+			"User":{"Name":"User"}
+		},
+		"WebSite":{
+			"Source":{"Url":"http://our.umbraco.org/ReleaseDownload?id=92348"}
+		}
+	},
+	"Parameters":{
+		"WebKeyPair":{
+			"Description":"Name of an existing EC2 keypair for Web instances",
+			"Type":"String",
+			"Default":"KeyPair1",
+			"MinLength":"1"
+		},
+		"WebInstanceType":{
+			"Description":"EC2 instance type for Web instances",
+			"Type":"String",
+			"Default":"m1.large",
+			"AllowedValues":["m1.small","m1.medium","m1.large","m1.xlarge","m2.xlarge","m2.2xlarge","m2.4xlarge","c1.medium","c1.xlarge"]
+		},
+		"WebContentVolumeSize":{
+			"Description":"Web content volume size (GiB)",
+			"Default":"20",
+			"Type":"Number",
+			"MinValue":"1",
+			"MaxValue":"1024",
+			"ConstraintDescription":"Must be between 1 GiB and 1024 GiB"
+		},
+		"WebLogsVolumeSize":{
+			"Description":"Web logs volume size (GiB)",
+			"Default":"10",
+			"Type":"Number",
+			"MinValue":"1",
+			"MaxValue":"1024",
+			"ConstraintDescription":"Must be between 1 GiB and 1024 GiB"
+		},
+		"DbInstanceClass":{
+			"Default":"db.m1.small",
+			"Description":"Database RDS instance class",
+			"Type":"String",
+			"AllowedValues":["db.m1.small","db.m1.large","db.m1.xlarge","db.m2.xlarge","db.m2.2xlarge","db.m2.4xlarge"],
+			"ConstraintDescription":"Must select a valid RDS instance type"
+		},
+		"DbStorage":{
+			"Description":"Database storage size (GiB)",
+			"Default":"200",
+			"Type":"Number",
+			"MinValue":"200",
+			"MaxValue":"1024",
+			"ConstraintDescription":"Must be between 200 GiB and 1024 GiB"
+		},
+		"DbBackupRetention":{
+			"Description":"Database backup retention period (days)",
+			"Default":"30",
+			"Type":"Number",
+			"MinValue":"0",
+			"ConstraintDescription":"Must be zero or greater"
+		},
+		"DbAdminPassword":{
+			"Description":"Database administrator account password",
+			"Type":"String",
+			"NoEcho":"true",
+			"MinLength":"20",
+			"ConstraintDescription":"Must be at least 20 characters long"
+		},
+		"DbUserPassword":{
+			"Description":"Database user account password",
+			"Type":"String",
+			"NoEcho":"true",
+			"MinLength":"20",
+			"ConstraintDescription":"Must be at least 20 characters long"
+		},
+		"SmtpServerHost":{
+			"Description":"SMTP Server Host",
+			"Type":"String",
+			"AllowedPattern":"[a-zA-Z0-9\\.]*",
+			"ConstraintDescription":"Must be a valid domain name or IP address"
+		},
+		"SmtpUserName":{
+			"Description":"SMTP User Name",
+			"Type":"String"
+		},
+		"SmtpUserPassword":{
+			"Description":"SMTP User Password",
+			"Type":"String",
+			"NoEcho":"true"
+		}
+	},
+	"Resources":{
+		"VPC":{
+			"Type":"AWS::EC2::VPC","Properties":{
+				"CidrBlock":{"Fn::FindInMap":["IPAddressRanges","VPC","Cidr"]}
+		}},
+		"InternetGateway":{
+			"Type":"AWS::EC2::InternetGateway"
+		},
+		"InternetGatewayAttachment":{
+			"Type":"AWS::EC2::VPCGatewayAttachment","Properties":{
+				"VpcId":{"Ref":"VPC"},
+				"InternetGatewayId":{"Ref":"InternetGateway"}
+			}
+		},
+		"DbSubnet1":{
+			"Type":"AWS::EC2::Subnet",
+			"Properties":{
+				"VpcId":{"Ref":"VPC"},
+				"AvailabilityZone":{"Fn::Select":[0,{"Fn::GetAZs":{"Ref":"AWS::Region"}}]},
+				"CidrBlock":{"Fn::FindInMap":["IPAddressRanges","DbSubnet1","Cidr"]}
+			}
+		},
+		"DbSubnet2":{
+			"Type":"AWS::EC2::Subnet",
+			"Properties":{
+				"VpcId":{"Ref":"VPC"},
+				"AvailabilityZone":{"Fn::Select":[1,{"Fn::GetAZs":{"Ref":"AWS::Region"}}]},
+				"CidrBlock":{"Fn::FindInMap":["IPAddressRanges","DbSubnet2","Cidr"]}
+			}
+		},
+		"DbSubnetGroup":{
+			"Type":"AWS::RDS::DBSubnetGroup",
+			"Properties":{
+				"DBSubnetGroupDescription":"DBSubnetGroup",
+				"SubnetIds":[
+					{"Ref":"DbSubnet1"},
+					{"Ref":"DbSubnet2"}
+				]
+			}
+		},
+		"WebSubnet1":{
+			"Type":"AWS::EC2::Subnet",
+			"Properties":{
+				"VpcId":{"Ref":"VPC"},
+				"AvailabilityZone":{"Fn::Select":[0,{"Fn::GetAZs":{"Ref":"AWS::Region"}}]},
+				"CidrBlock":{"Fn::FindInMap":["IPAddressRanges","WebSubnet1","Cidr"]}
+			}
+		},
+		"WebSubnet2":{
+			"Type":"AWS::EC2::Subnet",
+			"Properties":{
+				"VpcId":{"Ref":"VPC"},
+				"AvailabilityZone":{"Fn::Select":[1,{"Fn::GetAZs":{"Ref":"AWS::Region"}}]},
+				"CidrBlock":{"Fn::FindInMap":["IPAddressRanges","WebSubnet2","Cidr"]}
+			}
+		},
+		"WebRouteTable":{
+			"Type":"AWS::EC2::RouteTable",
+			"Properties":{
+				"VpcId":{"Ref":"VPC"}
+			}
+		},
+		"WebSubnet1RouteTableAssociation":{
+			"Type":"AWS::EC2::SubnetRouteTableAssociation",
+			"Properties":{
+				"RouteTableId":{"Ref":"WebRouteTable"},
+				"SubnetId":{"Ref":"WebSubnet1"}
+			}
+		},
+		"WebSubnet2RouteTableAssociation":{
+			"Type":"AWS::EC2::SubnetRouteTableAssociation",
+			"Properties":{
+				"RouteTableId":{"Ref":"WebRouteTable"},
+				"SubnetId":{"Ref":"WebSubnet2"}
+			}
+		},
+		"WebInternetRoute":{
+			"Type":"AWS::EC2::Route",
+			"Properties":{
+				"RouteTableId":{"Ref":"WebRouteTable"},
+				"DestinationCidrBlock":"0.0.0.0/0",
+				"GatewayId":{"Ref":"InternetGateway"}
+			}
+		},
+		"DbNetworkAcl":{
+			"Type":"AWS::EC2::NetworkAcl",
+			"Properties":{
+				"VpcId":{"Ref":"VPC"}
+			}
+		},
+		"DbSubnet1NetworkAclAssociation":{
+			"Type":"AWS::EC2::SubnetNetworkAclAssociation",
+			"Properties":{
+				"NetworkAclId":{"Ref":"DbNetworkAcl"},
+				"SubnetId":{"Ref":"DbSubnet1"}
+			}
+		},
+		"DbSubnet2NetworkAclAssociation":{
+			"Type":"AWS::EC2::SubnetNetworkAclAssociation","Properties":{
+				"NetworkAclId":{"Ref":"DbNetworkAcl"},
+				"SubnetId":{"Ref":"DbSubnet2"}
+		}},
+		"WebNetworkAcl":{
+			"Type":"AWS::EC2::NetworkAcl",
+			"Properties":{
+				"VpcId":{"Ref":"VPC"}
+			}
+		},
+		"WebSubnet1NetworkAclAssociation":{
+			"Type":"AWS::EC2::SubnetNetworkAclAssociation",
+			"Properties":{
+				"NetworkAclId":{"Ref":"WebNetworkAcl"},
+				"SubnetId":{"Ref":"WebSubnet1"}
+			}
+		},
+		"WebSubnet2NetworkAclAssociation":{
+			"Type":"AWS::EC2::SubnetNetworkAclAssociation",
+			"Properties":{
+				"NetworkAclId":{"Ref":"WebNetworkAcl"},
+				"SubnetId":{"Ref":"WebSubnet2"}
+			}
+		},
+		"DbWebSubnet1IngressNetworkAclEntry":{
+			"Type":"AWS::EC2::NetworkAclEntry",
+			"Properties":{
+				"NetworkAclId":{"Ref":"DbNetworkAcl"},
+				"RuleNumber":"101",
+				"RuleAction":"allow",
+				"Egress":"false",
+				"CidrBlock":{"Fn::FindInMap":["IPAddressRanges","WebSubnet1","Cidr"]},
+				"Protocol":"6",
+				"PortRange":{"From":"1433","To":"1433"}
+			}
+		},
+		"DbWebSubnet2IngressNetworkAclEntry":{
+			"Type":"AWS::EC2::NetworkAclEntry",
+			"Properties":{
+				"NetworkAclId":{"Ref":"DbNetworkAcl"},
+				"RuleNumber":"102",
+				"RuleAction":"allow",
+				"Egress":"false",
+				"CidrBlock":{"Fn::FindInMap":["IPAddressRanges","WebSubnet2","Cidr"]},
+				"Protocol":"6",
+				"PortRange":{"From":"1433","To":"1433"}
+			}
+		},
+		"DbWebSubnet1EphemeralEgressNetworkAclEntry":{
+			"Type":"AWS::EC2::NetworkAclEntry",
+			"Properties":{
+				"NetworkAclId":{"Ref":"DbNetworkAcl"},
+				"RuleNumber":"101",
+				"RuleAction":"allow",
+				"Egress":"true",
+				"CidrBlock":{"Fn::FindInMap":["IPAddressRanges","WebSubnet1","Cidr"]},
+				"Protocol":"6",
+				"PortRange":{"From":"1024","To":"65535"}
+			}
+		},
+		"DbWebSubnet2EphemeralEgressNetworkAclEntry":{
+			"Type":"AWS::EC2::NetworkAclEntry",
+			"Properties":{
+				"NetworkAclId":{"Ref":"DbNetworkAcl"},
+				"RuleNumber":"102",
+				"RuleAction":"allow",
+				"Egress":"true",
+				"CidrBlock":{"Fn::FindInMap":["IPAddressRanges","WebSubnet2","Cidr"]},
+				"Protocol":"6",
+				"PortRange":{"From":"1024","To":"65535"}
+			}
+		},
+		"WebHttpIngressNetworkAclEntry":{
+			"Type":"AWS::EC2::NetworkAclEntry",
+			"Properties":{
+				"NetworkAclId":{"Ref":"WebNetworkAcl"},
+				"RuleNumber":"100",
+				"RuleAction":"allow",
+				"Egress":"false",
+				"CidrBlock":{"Fn::FindInMap":["IPAddressRanges","WebHttpSource","Cidr"]},
+				"Protocol":"6",
+				"PortRange":{"From":"80","To":"80"}
+			}
+		},
+		"WebRdpIngressNetworkAclEntry":{
+			"Type":"AWS::EC2::NetworkAclEntry",
+			"Properties":{
+				"NetworkAclId":{"Ref":"WebNetworkAcl"},
+				"RuleNumber":"200",
+				"RuleAction":"allow",
+				"Egress":"false",
+				"CidrBlock":{"Fn::FindInMap":["IPAddressRanges","WebRdpSource","Cidr"]},
+				"Protocol":"6",
+				"PortRange":{"From":"3389","To":"3389"}
+			}
+		},
+		"WebEphemeralIngressNetworkAclEntry":{
+			"Type":"AWS::EC2::NetworkAclEntry",
+			"Properties":{
+				"NetworkAclId":{"Ref":"WebNetworkAcl"},
+				"RuleNumber":"300",
+				"RuleAction":"allow",
+				"Egress":"false",
+				"CidrBlock":{"Fn::FindInMap":["IPAddressRanges","WebHttpSource","Cidr"]},
+				"Protocol":"6",
+				"PortRange":{"From":"1024","To":"65535"}
+			}
+		},
+		"WebDb1SubnetEgressNetworkAclEntry":{
+			"Type":"AWS::EC2::NetworkAclEntry",
+			"Properties":{
+				"NetworkAclId":{"Ref":"WebNetworkAcl"},
+				"RuleNumber":"101",
+				"RuleAction":"allow",
+				"Egress":"true",
+				"CidrBlock":{"Fn::FindInMap":["IPAddressRanges","DbSubnet1","Cidr"]},
+				"Protocol":"6",
+				"PortRange":{"From":"1433","To":"1433"}
+			}
+		},
+		"WebDb2SubnetEgressNetworkAclEntry":{
+			"Type":"AWS::EC2::NetworkAclEntry",
+			"Properties":{
+				"NetworkAclId":{"Ref":"WebNetworkAcl"},
+				"RuleNumber":"102",
+				"RuleAction":"allow",
+				"Egress":"true",
+				"CidrBlock":{"Fn::FindInMap":["IPAddressRanges","DbSubnet2","Cidr"]},
+				"Protocol":"6",
+				"PortRange":{"From":"1433","To":"1433"}
+			}
+		},
+		"WebHttpEgressNetworkAclEntry":{
+			"Type":"AWS::EC2::NetworkAclEntry",
+			"Properties":{
+				"NetworkAclId":{"Ref":"WebNetworkAcl"},
+				"RuleNumber":"200",
+				"RuleAction":"allow",
+				"Egress":"true",
+				"CidrBlock":{"Fn::FindInMap":["IPAddressRanges","WebHttpEgressDestination","Cidr"]},
+				"Protocol":"6",
+				"PortRange":{"From":"80","To":"80"}
+			}
+		},
+		"WebHttpsEgressNetworkAclEntry":{
+			"Type":"AWS::EC2::NetworkAclEntry",
+			"Properties":{
+				"NetworkAclId":{"Ref":"WebNetworkAcl"},
+				"RuleNumber":"300",
+				"RuleAction":"allow",
+				"Egress":"true",
+				"CidrBlock":{"Fn::FindInMap":["IPAddressRanges","WebHttpEgressDestination","Cidr"]},
+				"Protocol":"6",
+				"PortRange":{"From":"443","To":"443"}
+			}
+		},
+		"WebEphemeralEgressNetworkAclEntry":{
+			"Type":"AWS::EC2::NetworkAclEntry",
+			"Properties":{
+				"NetworkAclId":{"Ref":"WebNetworkAcl"},
+				"RuleNumber":"400",
+				"RuleAction":"allow",
+				"Egress":"true",
+				"CidrBlock":{"Fn::FindInMap":["IPAddressRanges","WebEphemeralEgressDestination","Cidr"]},
+				"Protocol":"6",
+				"PortRange":{"From":"1024","To":"65535"}
+			}
+		},
+		"DbSecurityGroup":{
+			"Type":"AWS::EC2::SecurityGroup",
+			"Properties":{
+				"VpcId":{"Ref":"VPC"},
+				"GroupDescription":"Security group for RDS instances",
+				"SecurityGroupEgress":[]
+			}
+		},
+		"WebSecurityGroup":{
+			"Type":"AWS::EC2::SecurityGroup",
+			"Properties":{
+				"VpcId":{"Ref":"VPC"},
+				"GroupDescription":"Security group for web instances",
+				"SecurityGroupEgress":[]
+			}
+		},
+		"DbWebSecurityGroupIngress":{
+			"Type":"AWS::EC2::SecurityGroupIngress",
+			"Properties":{
+				"GroupId":{"Ref":"DbSecurityGroup"},
+				"IpProtocol":"tcp",
+				"ToPort":"1433",
+				"FromPort":"1433",
+				"SourceSecurityGroupId":{"Ref":"WebSecurityGroup"}
+			}
+		},
+		"WebHttpSecurityGroupIngress":{
+			"Type":"AWS::EC2::SecurityGroupIngress",
+			"Properties":{
+				"GroupId":{"Ref":"WebSecurityGroup"},
+				"IpProtocol":"tcp",
+				"ToPort":"80",
+				"FromPort":"80",
+				"CidrIp":{"Fn::FindInMap":["IPAddressRanges","WebHttpSource","Cidr"]}
+			}
+		},
+		"WebRdpSecurityGroupIngress":{
+			"Type":"AWS::EC2::SecurityGroupIngress",
+			"Properties":{
+				"GroupId":{"Ref":"WebSecurityGroup"},
+				"IpProtocol":"tcp",
+				"ToPort":"3389",
+				"FromPort":"3389",
+				"CidrIp":{"Fn::FindInMap":["IPAddressRanges","WebRdpSource","Cidr"]}
+			}
+		},
+		"WebDbSecurityGroupEgress":{
+			"Type":"AWS::EC2::SecurityGroupEgress",
+			"Properties":{
+				"GroupId":{"Ref":"WebSecurityGroup"},
+				"IpProtocol":"tcp",
+				"ToPort":"1433",
+				"FromPort":"1433",
+				"DestinationSecurityGroupId":{"Ref":"DbSecurityGroup"}
+			}
+		},
+		"WebHttpSecurityGroupEgress":{
+			"Type":"AWS::EC2::SecurityGroupEgress",
+			"Properties":{
+				"GroupId":{"Ref":"WebSecurityGroup"},
+				"IpProtocol":"tcp",
+				"ToPort":"80",
+				"FromPort":"80",
+				"CidrIp":{"Fn::FindInMap":["IPAddressRanges","WebHttpEgressDestination","Cidr"]}
+			}
+		},
+		"WebHttpsSecurityGroupEgress":{
+			"Type":"AWS::EC2::SecurityGroupEgress",
+			"Properties":{
+				"GroupId":{"Ref":"WebSecurityGroup"},
+				"IpProtocol":"tcp",
+				"ToPort":"443",
+				"FromPort":"443",
+				"CidrIp":{"Fn::FindInMap":["IPAddressRanges","WebHttpEgressDestination","Cidr"]}
+			}
+		},
+		"DbInstance":{
+			"Type":"AWS::RDS::DBInstance",
+			"Properties":{
+				"AllocatedStorage":{"Ref":"DbStorage"},
+				"Engine":"sqlserver-se",
+				"LicenseModel":"license-included",
+				"AvailabilityZone":{"Fn::Select":[0,{"Fn::GetAZs":{"Ref":"AWS::Region"}}]},
+				"DBSubnetGroupName":{"Ref":"DbSubnetGroup"},
+				"VPCSecurityGroups":[{"Ref":"DbSecurityGroup"}],
+				"BackupRetentionPeriod":{"Ref":"DbBackupRetention"},
+				"DBInstanceClass":{"Ref":"DbInstanceClass"},
+				"MasterUsername":{"Fn::FindInMap":["Database","Admin","Name"]},
+				"MasterUserPassword":{"Ref":"DbAdminPassword"},
+				"Port":"1433",
+				"Tags":[
+					{"Key":"Name","Value":"Db Instance"}
+				]
+			},
+			"DeletionPolicy":"Snapshot"
+		},
+		"WebInstanceWaitHandle":{
+			"Type":"AWS::CloudFormation::WaitConditionHandle"
+		},
+		"WebInstance":{
+			"Type":"AWS::EC2::Instance",
+			"Properties":{
+				"SubnetId":{"Ref":"WebSubnet1"},
+				"InstanceType":{"Ref":"WebInstanceType"},
+				"ImageId":{"Fn::FindInMap":["Regions",{"Ref":"AWS::Region"},"WebAmi"]},
+				"SecurityGroupIds":[{"Ref":"WebSecurityGroup"}],
+				"KeyName":{"Ref":"WebKeyPair"},
+				"UserData":{"Fn::Base64":{"Fn::Join":["",[
+					"<script>\n",
+					"cfn-init.exe -v --stack ",{"Ref":"AWS::StackId"}," --resource WebInstance --configsets default --region ",{"Ref":"AWS::Region"},"\n",
+					"</script>"
+				]]}},
+				"Tags":[
+					{"Key":"Name","Value":"Web Instance"}
+				]
+			},
+			"Metadata":{
+				"AWS::CloudFormation::Init":{
+					"config":{
+						"files":{
+							"C:\\cfn\\cfn-hup.conf":{
+								"content":{"Fn::Join":["",[
+									"[main]\n",
+									"stack=",{"Ref":"AWS::StackId"},"\n",
+									"region=",{"Ref":"AWS::Region"},"\n"
+								]]}
+							},
+							"C:\\cfn\\hooks.d\\cfn-auto-reloader.conf":{
+								"content":{"Fn::Join":["",[
+									"[cfn-auto-reloader-hook]\n",
+									"triggers=post.update\n",
+									"path=Resources.WebInstance.Metadata.AWS::CloudFormation::Init\n",
+									"action=cfn-init.exe -v --stack ",{"Ref":"AWS::StackId"}," --resource WebInstance --configsets default --region ",{"Ref":"AWS::Region"},"\n"
+								]]}
+							},
+							"D:\\run-command.cmd":{
+								"content":{"Fn::Join":["",[
+									"powershell.exe -ExecutionPolicy Unrestricted -Command \"",
+										"$downloadsPath = \\\"C:/",{"Ref":"AWS::StackName"},"-Downloads\\\"; ",
+										"New-Item -Path $downloadsPath -ItemType Directory -Force | Out-Null; ",
+										"$scriptPath = Join-Path $downloadsPath \\\"configure-umbraco.ps1\\\"; ",
+										"(New-Object System.Net.WebClient).DownloadFile(\\\"https://s3-eu-west-1.amazonaws.com/cloudformation.leeatk.com/umbraco/0.1/configure-umbraco.ps1\\\",$scriptPath); ",
+										"Invoke-Expression \\\"$scriptPath ",
+											"-dbServerHost '",{"Fn::GetAtt":["DbInstance","Endpoint.Address"]},"' ",
+											"-dbServerPort ",{"Fn::GetAtt":["DbInstance","Endpoint.Port"]}," ",
+											"-dbAdminName '",{"Fn::FindInMap":["Database","Admin","Name"]},"' ",
+											"-dbAdminPassword '",{"Ref":"DbAdminPassword"},"' ",
+											
+											"-dbDeleteExisting ",
+											"-dbName '",{"Ref":"AWS::StackName"},"' ",
+											"-dbLoginName '",{"Ref":"AWS::StackName"},"-",{"Fn::FindInMap":["Database","User","Name"]},"' ",
+											"-dbUserName '",{"Fn::FindInMap":["Database","User","Name"]},"' ",
+											"-dbUserPassword '",{"Ref":"DbUserPassword"},"' ",
+											
+											"-smtpServerHost '",{"Ref":"SmtpServerHost"},"' ",
+											"-smtpUserName '",{"Ref":"SmtpUserName"},"' ",
+											"-smtpUserPassword '",{"Ref":"SmtpUserPassword"},"' ",
+											
+											"-fsDownloadsDirectoryPath 'C:\\",{"Ref":"AWS::StackName"},"' ",
+											"-fsContentDirectoryPath 'D:\\",{"Ref":"AWS::StackName"},"' ",
+											"-fsLogsDirectoryPath 'E:\\",{"Ref":"AWS::StackName"},"' ",
+											"-fsDeleteExistingDownloads",
+											"-fsDeleteExistingContent ",
+											"-fsDeleteExistingLogs ",
+											
+											"-webDeleteExistingSitesAndAppPools ",
+											"-webSourceUrl '",{"Fn::FindInMap":["WebSite","Source","Url"]},"' ",
+											"-webSiteName '",{"Ref":"AWS::StackName"},"' ",
+										"\\\"; ",
+									"\"",
+									"\npause\n"
+								]]}
+							}
+						},
+						"services":{
+							"windows":{
+								"cfn-hup":{
+									"enabled":"true",
+									"ensureRunning":"true",
+									"files":["C:\\cfn\\cfn-hup.conf","C:\\cfn\\hooks.d\\cfn-auto-reloader.conf"]
+								}
+							}
+						},
+						"commands":{
+							"1-configure":{
+								"command":{"Fn::Join":["",[
+									"powershell.exe -ExecutionPolicy Unrestricted -Command \"",
+										"$downloadsPath = \\\"C:/",{"Ref":"AWS::StackName"},"-Downloads\\\"; ",
+										"New-Item -Path $downloadsPath -ItemType Directory -Force | Out-Null; ",
+										"$scriptPath = Join-Path $downloadsPath \\\"configure-umbraco.ps1\\\"; ",
+										"(New-Object System.Net.WebClient).DownloadFile(\\\"https://s3-eu-west-1.amazonaws.com/cloudformation.leeatk.com/umbraco/0.1/configure-umbraco.ps1\\\",$scriptPath); ",
+										"Invoke-Expression \\\"$scriptPath ",
+											"-dbServerHost '",{"Fn::GetAtt":["DbInstance","Endpoint.Address"]},"' ",
+											"-dbServerPort ",{"Fn::GetAtt":["DbInstance","Endpoint.Port"]}," ",
+											"-dbAdminName '",{"Fn::FindInMap":["Database","Admin","Name"]},"' ",
+											"-dbAdminPassword '",{"Ref":"DbAdminPassword"},"' ",
+											
+											"-dbDeleteExisting ",
+											"-dbName '",{"Ref":"AWS::StackName"},"' ",
+											"-dbLoginName '",{"Ref":"AWS::StackName"},"-",{"Fn::FindInMap":["Database","User","Name"]},"' ",
+											"-dbUserName '",{"Fn::FindInMap":["Database","User","Name"]},"' ",
+											"-dbUserPassword '",{"Ref":"DbUserPassword"},"' ",
+											
+											"-smtpServerHost '",{"Ref":"SmtpServerHost"},"' ",
+											"-smtpUserName '",{"Ref":"SmtpUserName"},"' ",
+											"-smtpUserPassword '",{"Ref":"SmtpUserPassword"},"' ",
+											
+											"-fsDownloadsDirectoryPath 'C:\\",{"Ref":"AWS::StackName"},"' ",
+											"-fsContentDirectoryPath 'D:\\",{"Ref":"AWS::StackName"},"' ",
+											"-fsLogsDirectoryPath 'E:\\",{"Ref":"AWS::StackName"},"' ",
+											"-fsDeleteExistingDownloads",
+											"-fsDeleteExistingContent ",
+											"-fsDeleteExistingLogs ",
+											
+											"-webDeleteExistingSitesAndAppPools ",
+											"-webSourceUrl '",{"Fn::FindInMap":["WebSite","Source","Url"]},"' ",
+											"-webSiteName '",{"Ref":"AWS::StackName"},"' ",
+										"\\\"; ",
+									"\""
+								]]},
+								"waitAfterCompletion":"60"
+							},
+							"2-signal":{
+								"command":{"Fn::Join":["",[
+									"cfn-signal.exe --exit-code %ERRORLEVEL% ",{"Fn::Base64":{"Ref":"WebInstanceWaitHandle"}}
+								]]}
+							}
+						}
+					}
+				}
+			}
+		},
+		"WebContentVolume":{
+			"Type":"AWS::EC2::Volume",
+			"Properties":{
+				"Size":{"Ref":"WebContentVolumeSize"},
+				"AvailabilityZone":{"Fn::GetAtt":["WebInstance","AvailabilityZone"]}
+			},
+			  "DeletionPolicy":"Snapshot"
+		},
+		"WebContentVolumeAttachment":{
+		  "Type":"AWS::EC2::VolumeAttachment",
+		  "Properties":{
+				"InstanceId":{"Ref":"WebInstance"},
+				"VolumeId":{"Ref":"WebContentVolume"},
+				"Device":"/dev/sdh"
+			}
+		},
+		"WebLogsVolume":{
+			"Type":"AWS::EC2::Volume",
+			"Properties":{
+				"Size":{"Ref":"WebLogsVolumeSize"},
+				"AvailabilityZone":{"Fn::GetAtt":["WebInstance","AvailabilityZone"]}
+			},
+			"DeletionPolicy":"Snapshot"
+		},
+		"WebLogsVolumeAttachment":{
+			"Type":"AWS::EC2::VolumeAttachment",
+			"Properties":{
+				"InstanceId":{"Ref":"WebInstance"},
+				"VolumeId":{"Ref":"WebLogsVolume"},
+				"Device":"/dev/sdi"
+			}
+		},
+
+		"WebIP":{
+			"Type":"AWS::EC2::EIP",
+			"Properties":{
+				"Domain":"vpc",
+				"InstanceId":{"Ref":"WebInstance"}
+			}
+		},
+		"WebWaitCondition":{
+			"Type":"AWS::CloudFormation::WaitCondition",
+			"DependsOn":"WebInstance",
+			"Properties":{
+				"Handle":{"Ref":"WebInstanceWaitHandle"},
+				"Timeout":"1800"
+			}
+		}
+	},
+	"Outputs":{
+		"URL":{
+			"Description":"WebURL",
+			"Value":{"Fn::Join":["",["http://",{"Ref":"WebIP"}]]}
+		},
+		"WebKeyPair":{
+			"Description":"Web KeyPair name",
+			"Value":{"Ref":"WebKeyPair"}
+		},
+		"DbServerName":{
+			"Description":"Database server name",
+			"Value":{"Fn::GetAtt":["DbInstance","Endpoint.Address"]}
+		},
+		"DbServerPort":{
+			"Description":"Database server port",
+			"Value":{"Fn::GetAtt":["DbInstance","Endpoint.Port"]}
+		},
+		"DbAdminName":{
+			"Description":"Database administrator name",
+			"Value":{"Fn::FindInMap":["Database","Admin","Name"]}
+		},
+		"DbAdminPassword":{
+			"Description":"Database administrator password",
+			"Value":{"Ref":"DbAdminPassword"}
+		}
+	}
+}
